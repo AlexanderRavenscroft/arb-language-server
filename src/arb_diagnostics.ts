@@ -1,10 +1,15 @@
 import { JSONDocument, StringASTNode } from "vscode-json-languageservice";
 import { Diagnostic, DiagnosticSeverity } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { L10nConfiguration } from "./l10n_manager";
 
 export interface ArbValidationContext {
   readonly document: TextDocument;
   readonly jsonDocument: JSONDocument;
+  readonly l10nConfiguration: L10nConfiguration | undefined;
 }
 
 export type ArbValidator = (
@@ -17,6 +22,7 @@ const MESSAGE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 const arbValidators: ArbValidator[] = [
   validateMetadataHasMessage,
   validateKeyFormat,
+  validateMissingMessages,
 ];
 
 /// Delegate all validators
@@ -63,9 +69,10 @@ function validateMetadataHasMessage({
     }
 
     diagnostics.push(
-      createKeyDiagnostic({
+      createDiagnostic({
         document,
-        keyNode: metadataKeyNode,
+        offset: metadataKeyNode.offset,
+        length: metadataKeyNode.length,
         message: `Metadata for an undefined key. Add a message key with the name "${referencedMessageKey}".`,
         code: "arb/metadata-for-missing-key",
       }),
@@ -95,9 +102,10 @@ function validateKeyFormat({
     }
 
     diagnostics.push(
-      createKeyDiagnostic({
+      createDiagnostic({
         document,
-        keyNode: messageKeyNode,
+        offset: messageKeyNode.offset,
+        length: messageKeyNode.length,
         message: `Key "${messageKey}" is not a valid message key. The key must start with a letter and contain only letters, numbers, or underscores.`,
         code: "arb/invalid-key",
       }),
@@ -107,25 +115,91 @@ function validateKeyFormat({
   return diagnostics;
 }
 
-interface KeyDiagnosticOptions {
+async function validateMissingMessages({
+  document,
+  jsonDocument,
+  l10nConfiguration,
+}: ArbValidationContext): Promise<Diagnostic[]> {
+  if (
+    !l10nConfiguration ||
+    !document.uri.startsWith("file:") ||
+    jsonDocument.root?.type !== "object"
+  ) {
+    return [];
+  }
+
+  const documentPath = resolve(fileURLToPath(document.uri));
+
+  if (
+    dirname(documentPath) !== l10nConfiguration.arbDirectory ||
+    documentPath === l10nConfiguration.templateArbPath
+  ) {
+    return [];
+  }
+
+  let template: unknown;
+
+  try {
+    const content = await readFile(l10nConfiguration.templateArbPath, "utf8");
+    template = JSON.parse(content);
+  } catch {
+    return [];
+  }
+
+  if (
+    typeof template !== "object" ||
+    template === null ||
+    Array.isArray(template)
+  ) {
+    return [];
+  }
+
+  const existingKeys = new Set(
+    jsonDocument.root.properties.map((property) => property.keyNode.value),
+  );
+
+  const missingKeys = Object.keys(template).filter(
+    (key) => !key.startsWith("@") && !existingKeys.has(key),
+  );
+
+  if (missingKeys.length === 0) {
+    return [];
+  }
+
+  return [
+    createDiagnostic({
+      document,
+      offset: document.getText().length,
+      severity: DiagnosticSeverity.Warning,
+      code: "arb/missing-messages",
+      message:
+        `Missing messages defined in "${l10nConfiguration.templateArbFile}": ` +
+        missingKeys.join(", "),
+    }),
+  ];
+}
+
+interface DiagnosticOptions {
   readonly document: TextDocument;
-  readonly keyNode: StringASTNode;
+  readonly offset: number;
+  readonly length?: number;
   readonly message: string;
   readonly code: string;
   readonly severity?: DiagnosticSeverity;
 }
 
-function createKeyDiagnostic({
+function createDiagnostic({
   document,
-  keyNode,
+  offset,
+  length = 0,
   message,
   code,
   severity = DiagnosticSeverity.Error,
-}: KeyDiagnosticOptions): Diagnostic {
+}: DiagnosticOptions): Diagnostic {
   return {
     range: {
-      start: document.positionAt(keyNode.offset),
-      end: document.positionAt(keyNode.offset + keyNode.length),
+      start: document.positionAt(offset),
+      end: document.positionAt(offset + length),
     },
     severity,
     code,
