@@ -1,4 +1,4 @@
-import { JSONDocument, StringASTNode } from "vscode-json-languageservice";
+import { JSONDocument } from "vscode-json-languageservice";
 import { Diagnostic, DiagnosticSeverity } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { readFile } from "node:fs/promises";
@@ -21,6 +21,7 @@ const MESSAGE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 const arbValidators: ArbValidator[] = [
   validateMetadataHasMessage,
+  validateMessageHasMetadata,
   validateKeyFormat,
   validateMissingMessages,
 ];
@@ -75,6 +76,60 @@ function validateMetadataHasMessage({
         length: metadataKeyNode.length,
         message: `Metadata for an undefined key. Add a message key with the name "${referencedMessageKey}".`,
         code: "arb/metadata-for-missing-key",
+      }),
+    );
+  }
+
+  return diagnostics;
+}
+
+/// Check if every message in the template has metadata defined
+function validateMessageHasMetadata({
+  document,
+  jsonDocument,
+  l10nConfiguration,
+}: ArbValidationContext): Diagnostic[] {
+  if (
+    !l10nConfiguration ||
+    !document.uri.startsWith("file:") ||
+    jsonDocument.root?.type !== "object"
+  ) {
+    return [];
+  }
+
+  const documentPath = resolve(fileURLToPath(document.uri));
+
+  if (documentPath !== l10nConfiguration.templateArbPath) {
+    return [];
+  }
+
+  const topLevelProperties = jsonDocument.root.properties;
+  const definedMetadataKeys = new Set(
+    topLevelProperties
+      .filter((property) => property.keyNode.value.startsWith("@"))
+      .map((property) => property.keyNode.value),
+  );
+  const diagnostics: Diagnostic[] = [];
+
+  for (const property of topLevelProperties) {
+    const messageKeyNode = property.keyNode;
+    const messageKey = messageKeyNode.value;
+
+    if (
+      messageKey.startsWith("@") ||
+      definedMetadataKeys.has(`@${messageKey}`)
+    ) {
+      continue;
+    }
+
+    diagnostics.push(
+      createDiagnostic({
+        document,
+        offset: messageKeyNode.offset,
+        length: messageKeyNode.length,
+        message: `Message does not have metadata defined. Add metadata with the key "@${messageKey}".`,
+        code: "arb/message-without-metadata",
+        severity: DiagnosticSeverity.Information,
       }),
     );
   }
