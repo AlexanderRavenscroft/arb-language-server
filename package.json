@@ -6,9 +6,18 @@
   "engines": {
     "node": ">=18"
   },
+  "files": [
+    "out/",
+    "schemas/"
+  ],
   "scripts": {
-    "compile": "tsc -p .",
-    "watch": "tsc -p . -w"
+	"clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
+	"compile": "tsc -p .",
+	"watch": "tsc -p . -w",
+	"prepack": "npm run clean && npm run compile -- --incremental false"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "vscode-json-languageservice": "^5.7.2",
