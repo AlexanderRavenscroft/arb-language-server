@@ -1,4 +1,5 @@
 import {
+  CodeActionKind,
   createConnection,
   InitializeParams,
   InitializeResult,
@@ -8,6 +9,7 @@ import {
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { collectArbDiagnostics } from "./arb_diagnostics";
+import { provideArbCodeActions } from "./arb_code_actions";
 import { JsonService } from "./json_language_service";
 import { DidChangeWatchedFilesNotification } from "vscode-languageserver/node";
 import { L10nManager } from "./l10n_manager";
@@ -31,6 +33,9 @@ connection.onInitialize(
 
     return {
       capabilities: {
+        codeActionProvider: {
+          codeActionKinds: [CodeActionKind.QuickFix],
+        },
         textDocumentSync: {
           openClose: true,
           change: TextDocumentSyncKind.Incremental,
@@ -160,6 +165,19 @@ connection.onCompletion(async (params) => {
     );
     return null;
   }
+});
+
+connection.onCodeAction((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!jsonService || !document) {
+    return [];
+  }
+
+  return provideArbCodeActions(
+    document,
+    jsonService.getJsonDocument(document),
+    params.context,
+  );
 });
 
 documents.onDidClose(({ document }) => {
