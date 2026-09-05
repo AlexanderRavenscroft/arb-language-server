@@ -132,9 +132,13 @@ function validateMessageHasMetadata({
           document,
           offset: messageKeyNode.offset,
           length: messageKeyNode.length,
-          message: `Message does not have metadata defined. Add metadata with the key "@${messageKey}".`,
+          message: l10nConfiguration.requiredResourceAttributes
+            ? `Message metadata is required by "required-resource-attributes". Add metadata with the key "@${messageKey}".`
+            : `Message does not have metadata defined. Add metadata with the key "@${messageKey}".`,
           code: "arb/message-without-metadata",
-          severity: DiagnosticSeverity.Information,
+          severity: l10nConfiguration.requiredResourceAttributes
+            ? DiagnosticSeverity.Error
+            : DiagnosticSeverity.Information,
         }),
       );
     }
@@ -144,12 +148,16 @@ function validateMessageHasMetadata({
     }
 
     const messageNode = property.valueNode;
-    const placeholders = findMessagePlaceholders(messageNode.value);
     const metadataPlaceholderNodes =
       metadataPlaceholdersByMessage.get(messageKey) ?? [];
     const metadataPlaceholderNames = new Set(
       metadataPlaceholderNodes.map((placeholder) => placeholder.value),
     );
+    const placeholders = findMessagePlaceholders(messageNode.value, {
+      useEscaping: l10nConfiguration.useEscaping,
+      relaxSyntax: l10nConfiguration.relaxSyntax,
+      validPlaceholderNames: metadataPlaceholderNames,
+    });
     const usedPlaceholderNames = new Set(
       placeholders.map((placeholder) => placeholder.value),
     );

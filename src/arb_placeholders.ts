@@ -11,6 +11,12 @@ export interface PlaceholderOccurrence {
   readonly end: number;
 }
 
+export interface MessagePlaceholderOptions {
+  readonly useEscaping?: boolean;
+  readonly relaxSyntax?: boolean;
+  readonly validPlaceholderNames?: ReadonlySet<string>;
+}
+
 export function getMetadataPlaceholderNodesByMessage(
   jsonDocument: JSONDocument,
 ): ReadonlyMap<string, StringASTNode[]> {
@@ -54,8 +60,14 @@ export function getMetadataPlaceholderNodesByMessage(
 
 export function findMessagePlaceholders(
   message: string,
+  {
+    useEscaping = false,
+    relaxSyntax = false,
+    validPlaceholderNames,
+  }: MessagePlaceholderOptions = {},
 ): PlaceholderOccurrence[] {
   const placeholders: PlaceholderOccurrence[] = [];
+  const syntaxMessage = useEscaping ? maskEscapedSyntax(message) : message;
 
   parseMessage(0, false);
 
@@ -64,12 +76,17 @@ export function findMessagePlaceholders(
   function parseMessage(start: number, stopAtClosingBrace: boolean): number {
     let index = start;
 
-    while (index < message.length) {
-      if (message[index] === "}" && stopAtClosingBrace) {
+    while (index < syntaxMessage.length) {
+      if (syntaxMessage[index] === "}" && stopAtClosingBrace) {
         return index;
       }
 
-      if (message[index] !== "{") {
+      if (syntaxMessage[index] !== "{") {
+        index += 1;
+        continue;
+      }
+
+      if (relaxSyntax && !isValidRelaxedPlaceholder(index)) {
         index += 1;
         continue;
       }
@@ -86,24 +103,29 @@ export function findMessagePlaceholders(
     let delimiter = nameStart;
 
     while (
-      delimiter < message.length &&
-      message[delimiter] !== "," &&
-      message[delimiter] !== "}"
+      delimiter < syntaxMessage.length &&
+      syntaxMessage[delimiter] !== "," &&
+      syntaxMessage[delimiter] !== "}"
     ) {
       delimiter += 1;
     }
 
-    if (delimiter >= message.length) {
-      return message.length;
+    if (delimiter >= syntaxMessage.length) {
+      return syntaxMessage.length;
     }
 
+    const rawName = message.slice(nameStart, delimiter);
+    const placeholderName = rawName.trim();
+    const leadingWhitespaceLength = rawName.length - rawName.trimStart().length;
+    const placeholderStart = nameStart + leadingWhitespaceLength;
+
     placeholders.push({
-      value: message.slice(nameStart, delimiter),
-      start: nameStart,
-      end: delimiter,
+      value: placeholderName,
+      start: placeholderStart,
+      end: placeholderStart + placeholderName.length,
     });
 
-    if (message[delimiter] === "}") {
+    if (syntaxMessage[delimiter] === "}") {
       return delimiter + 1;
     }
 
@@ -111,15 +133,15 @@ export function findMessagePlaceholders(
     let typeEnd = typeStart;
 
     while (
-      typeEnd < message.length &&
-      message[typeEnd] !== "," &&
-      message[typeEnd] !== "}"
+      typeEnd < syntaxMessage.length &&
+      syntaxMessage[typeEnd] !== "," &&
+      syntaxMessage[typeEnd] !== "}"
     ) {
       typeEnd += 1;
     }
 
-    if (typeEnd >= message.length || message[typeEnd] === "}") {
-      return Math.min(typeEnd + 1, message.length);
+    if (typeEnd >= syntaxMessage.length || syntaxMessage[typeEnd] === "}") {
+      return Math.min(typeEnd + 1, syntaxMessage.length);
     }
 
     const argumentType = message.slice(typeStart, typeEnd).trim();
@@ -134,19 +156,21 @@ export function findMessagePlaceholders(
   function parseComplexArgument(start: number): number {
     let index = start;
 
-    while (index < message.length) {
-      if (message[index] === "}") {
+    while (index < syntaxMessage.length) {
+      if (syntaxMessage[index] === "}") {
         return index + 1;
       }
 
-      if (message[index] !== "{") {
+      if (syntaxMessage[index] !== "{") {
         index += 1;
         continue;
       }
 
       const submessageEnd = parseMessage(index + 1, true);
       index =
-        submessageEnd < message.length ? submessageEnd + 1 : submessageEnd;
+        submessageEnd < syntaxMessage.length
+          ? submessageEnd + 1
+          : submessageEnd;
     }
 
     return index;
@@ -156,10 +180,10 @@ export function findMessagePlaceholders(
     let depth = 1;
     let index = openingBrace + 1;
 
-    while (index < message.length && depth > 0) {
-      if (message[index] === "{") {
+    while (index < syntaxMessage.length && depth > 0) {
+      if (syntaxMessage[index] === "{") {
         depth += 1;
-      } else if (message[index] === "}") {
+      } else if (syntaxMessage[index] === "}") {
         depth -= 1;
       }
 
@@ -168,4 +192,68 @@ export function findMessagePlaceholders(
 
     return index;
   }
+
+  function isValidRelaxedPlaceholder(openingBrace: number): boolean {
+    const nameStart = openingBrace + 1;
+    let delimiter = nameStart;
+
+    while (
+      delimiter < syntaxMessage.length &&
+      syntaxMessage[delimiter] !== "," &&
+      syntaxMessage[delimiter] !== "}"
+    ) {
+      delimiter += 1;
+    }
+
+    if (delimiter >= syntaxMessage.length) {
+      return false;
+    }
+
+    const placeholderName = syntaxMessage.slice(nameStart, delimiter).trim();
+
+    return (
+      PLACEHOLDER_NAME_PATTERN.test(placeholderName) &&
+      (validPlaceholderNames === undefined ||
+        validPlaceholderNames.has(placeholderName))
+    );
+  }
+}
+
+function maskEscapedSyntax(message: string): string {
+  const characters = message.split("");
+  let index = 0;
+
+  while (index < characters.length) {
+    if (characters[index] !== "'") {
+      index += 1;
+      continue;
+    }
+
+    if (characters[index + 1] === "'") {
+      index += 2;
+      continue;
+    }
+
+    index += 1;
+
+    while (index < characters.length) {
+      if (characters[index] === "'") {
+        if (characters[index + 1] === "'") {
+          index += 2;
+          continue;
+        }
+
+        index += 1;
+        break;
+      }
+
+      if (characters[index] === "{" || characters[index] === "}") {
+        characters[index] = " ";
+      }
+
+      index += 1;
+    }
+  }
+
+  return characters.join("");
 }

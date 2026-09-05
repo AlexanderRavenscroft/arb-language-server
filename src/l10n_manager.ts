@@ -9,11 +9,17 @@ export interface L10nConfiguration {
   readonly arbDirectory: string;
   readonly templateArbFile: string;
   readonly templateArbPath: string;
+  readonly useEscaping: boolean;
+  readonly relaxSyntax: boolean;
+  readonly requiredResourceAttributes: boolean;
 }
 
 export class L10nManager {
-  DEFAULT_ARB_DIRECTORY = "lib/l10n";
-  DEFAULT_TEMPLATE_ARB_FILE = "app_en.arb";
+  private static readonly DEFAULT_ARB_DIRECTORY = "lib/l10n";
+  private static readonly DEFAULT_TEMPLATE_ARB_FILE = "app_en.arb";
+  private static readonly DEFAULT_USE_ESCAPING = false;
+  private static readonly DEFAULT_RELAX_SYNTAX = false;
+  private static readonly DEFAULT_REQUIRED_RESOURCE_ATTRIBUTES = false;
 
   private currentConfiguration: L10nConfiguration | undefined;
 
@@ -112,19 +118,31 @@ export class L10nManager {
     const config = parsed as Record<string, unknown>;
     const arbDirectoryValue = config["arb-dir"];
     const templateFileValue = config["template-arb-file"];
+    const useEscapingValue = config["use-escaping"];
+    const relaxSyntaxValue = config["relax-syntax"];
+    const requiredResourceAttributesValue =
+      config["required-resource-attributes"];
 
     if (
       (arbDirectoryValue !== undefined &&
         typeof arbDirectoryValue !== "string") ||
-      (templateFileValue !== undefined && typeof templateFileValue !== "string")
+      (templateFileValue !== undefined &&
+        typeof templateFileValue !== "string") ||
+      (useEscapingValue !== undefined &&
+        typeof useEscapingValue !== "boolean") ||
+      (relaxSyntaxValue !== undefined &&
+        typeof relaxSyntaxValue !== "boolean") ||
+      (requiredResourceAttributesValue !== undefined &&
+        typeof requiredResourceAttributesValue !== "boolean")
     ) {
       this.currentConfiguration = undefined;
       return;
     }
 
     const configuredArbDirectory =
-      arbDirectoryValue ?? this.DEFAULT_ARB_DIRECTORY;
-    const templateArbFile = templateFileValue ?? this.DEFAULT_TEMPLATE_ARB_FILE;
+      arbDirectoryValue ?? L10nManager.DEFAULT_ARB_DIRECTORY;
+    const templateArbFile =
+      templateFileValue ?? L10nManager.DEFAULT_TEMPLATE_ARB_FILE;
 
     if (
       configuredArbDirectory.trim().length === 0 ||
@@ -140,6 +158,11 @@ export class L10nManager {
       arbDirectory,
       templateArbFile,
       templateArbPath: resolve(arbDirectory, templateArbFile),
+      useEscaping: useEscapingValue ?? L10nManager.DEFAULT_USE_ESCAPING,
+      relaxSyntax: relaxSyntaxValue ?? L10nManager.DEFAULT_RELAX_SYNTAX,
+      requiredResourceAttributes:
+        requiredResourceAttributesValue ??
+        L10nManager.DEFAULT_REQUIRED_RESOURCE_ATTRIBUTES,
     };
   }
 }
