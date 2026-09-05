@@ -1,8 +1,6 @@
 # ARB Language Server
 
-A Language Server Protocol (LSP) server for Flutter Application Resource Bundle (`.arb`) localization files. Provides JSON and ARB diagnostics, schema-based completions, and checks against a project's template ARB file.
-
-The server runs locally using Node.js and communicates with an editor over standard input/output (`--stdio`).
+A Language Server Protocol (LSP) server for Flutter Application Resource Bundle (`.arb`) files. Provides diagnostics, schema-based completions, and metadata quick fixes over standard input/output (`--stdio`).
 
 ## Features
 
@@ -11,8 +9,18 @@ The server runs locally using Node.js and communicates with an editor over stand
 - Diagnostics for invalid message keys and metadata that references a missing message.
 - Template diagnostics for missing message metadata, invalid placeholder names, placeholders without metadata, and unused placeholder metadata.
 - Warnings for translation files missing messages present in the saved template file.
+- Quick fixes for missing message and placeholder metadata.
 
 Template and translation checks use the project's `l10n.yaml`. Basic JSON/schema validation and message-key checks also work without that configuration.
+
+## Quick fixes
+
+| Action                                  | Behavior                                                                            |
+| --------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Add metadata for key 'foo'**          | Inserts `"@foo": {}` immediately after the message.                                 |
+| **Add metadata for placeholder 'name'** | Adds `"name": {}` to an existing `@foo` block, creating `placeholders` when needed. |
+
+Quick fixes preserve detected indentation and line endings and are unavailable while the document contains invalid JSON. If message metadata is missing, add it first, then add placeholder metadata.
 
 ## Requirements and editor setup
 
@@ -21,14 +29,14 @@ Template and translation checks use the project's `l10n.yaml`. Basic JSON/schema
 
 For Zed integration, see the [ARB extension](https://github.com/AlexanderRavenscroft/arb). Its installer manages the server package and launches it using Zed's Node.js runtime.
 
-For a manual npm installation, once the package is published:
+For manual installation:
 
 ```sh
 npm install arb-language-server
 node node_modules/arb-language-server/out/server.js --stdio
 ```
 
-Configure your editor to run Node.js with the **absolute path** to the installed `out/server.js`, followed by `--stdio`, for `.arb` files. The Zed integration sends `json` as the LSP document language ID. The package currently has no command-line `bin` entry; launch the script directly.
+Configure your editor to run Node.js with the **absolute path** to the installed `out/server.js`, followed by `--stdio`, for `.arb` files. There is no command-line `bin` entry; launch the script directly.
 
 Running the command in a terminal waits for LSP messages. It does not open an interactive interface.
 
@@ -46,15 +54,15 @@ required-resource-attributes: false
 
 These are the settings currently read by the server:
 
-| Setting                        | Default      | Behavior                                                                                                           |
-| ------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `arb-dir`                      | `lib/l10n`   | ARB directory, resolved relative to the directory containing `l10n.yaml`.                                          |
-| `template-arb-file`            | `app_en.arb` | Template filename, resolved relative to `arb-dir`.                                                                 |
-| `use-escaping`                 | `false`      | Handles apostrophe-escaped braces when scanning placeholders.                                                      |
-| `relax-syntax`                 | `false`      | Recognizes brace expressions as placeholders only when their names are valid and declared in the message metadata. |
-| `required-resource-attributes` | `false`      | Reports missing template message metadata as an error when enabled; otherwise reports it as information.           |
+| Setting                        | Default      | Behavior                                                                         |
+| ------------------------------ | ------------ | -------------------------------------------------------------------------------- |
+| `arb-dir`                      | `lib/l10n`   | ARB directory relative to `l10n.yaml`.                                           |
+| `template-arb-file`            | `app_en.arb` | Template filename relative to `arb-dir`.                                         |
+| `use-escaping`                 | `false`      | Handles apostrophe-escaped braces when scanning placeholders.                    |
+| `relax-syntax`                 | `false`      | Recognizes only valid placeholders declared in message metadata.                 |
+| `required-resource-attributes` | `false`      | Makes missing template metadata an error instead of an informational diagnostic. |
 
-Defaults apply to omitted settings in a valid YAML mapping. Without a valid configuration, template-dependent checks are disabled. Other Flutter localization settings are not interpreted by this server.
+Defaults apply to omitted settings in a valid YAML mapping. Without `l10n.yaml`, template-dependent checks are disabled. Other Flutter localization settings are not interpreted.
 
 A template message with placeholder metadata:
 
@@ -74,14 +82,15 @@ A template message with placeholder metadata:
 }
 ```
 
-When the client supports dynamic file watching, the server registers watchers for `l10n.yaml` and `.arb` files and revalidates open documents after relevant configuration or template changes. Saving an open template also revalidates open translation files in the configured ARB directory.
+Configuration and template changes trigger revalidation when the client supports dynamic file watching. Saving an open template also revalidates open translations.
 
 ## Current scope
 
-- Initial configuration is loaded from the first workspace folder supplied by the client. Multiple independent project configurations in one server instance are not supported.
+- Open one Flutter project at its root. Configuration is loaded from the first workspace folder; multiple or nested project configurations are not supported.
+- Keep `l10n.yaml` valid: malformed YAML can prevent server initialization. Correct it and restart the server if startup fails.
 - Missing-message checks apply to files directly inside `arb-dir` and read the template from disk. Save template edits before expecting them to affect translations. These checks are skipped if the template cannot be read or parsed.
 - Placeholder consistency checks run on the configured template file. Placeholder scanning handles simple arguments and nested `plural`, `select`, and `gender` branches; it is not a complete ICU message validator.
-- The server currently provides diagnostics and completions. It does not provide formatting, semantic tokens, rename, hover, or code actions, and does not generate Flutter localization code.
+- No ICU-specific highlighting, formatting, semantic tokens, rename, hover, or Flutter localization code generation.
 
 ## Development
 
@@ -95,18 +104,18 @@ node out/server.js --stdio
 
 Use `npm run watch` to recompile while editing. Restart the language server to load updated JavaScript.
 
-The ARB schema is maintained in `schemas/arb.json` and packaged with the server. Editor extensions do not need a separate schema copy.
-
-## Packaging
+## Packaging and releases
 
 ```sh
 npm pack --dry-run
 npm pack
 ```
 
-The `prepack` script deletes old `out/` files and compiles the current source with incremental compilation disabled. The package includes `out/` and `schemas/`; npm also includes the package manifest and README, plus the license file when present.
+Both commands run `prepack`, which cleans `out/` and compiles from source. The package includes compiled JavaScript, the ARB schema, README, manifest, and license.
 
-Do not commit `out/`, `node_modules/`, TypeScript build information, or generated `.tgz` archives. Commit source files, the schema, package manifests, and documentation. Test the packaged server before publishing a new npm version.
+For an update, bump the version with `npm version <new-version> --no-git-tag-version`, then pack and test the resulting archive. Publish the tested archive with `npm publish ./arb-language-server-<new-version>.tgz`. Published versions cannot be overwritten.
+
+Commit source and version changes; keep `out/`, `node_modules/`, build information, and `.tgz` archives out of Git. Zed extension releases are managed separately.
 
 ## License
 
