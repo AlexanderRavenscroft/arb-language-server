@@ -104,14 +104,17 @@ export class L10nManager {
       throw error;
     }
 
-    const parsed: unknown = parse(content);
+    let parsed: unknown;
 
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
+    try {
+      parsed = parse(content);
+    } catch (error) {
       this.currentConfiguration = undefined;
+      console.error(
+        `Cannot parse ${configPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       return;
     }
 

@@ -24,6 +24,13 @@ export function provideArbCodeActions(
     return [];
   }
 
+  // Disable actions for malformed JSON
+  try {
+    JSON.parse(document.getText());
+  } catch {
+    return [];
+  }
+
   const actions: CodeAction[] = [];
 
   for (const diagnostic of context.diagnostics) {
