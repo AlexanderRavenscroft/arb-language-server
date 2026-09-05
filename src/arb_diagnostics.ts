@@ -1,10 +1,15 @@
-import { JSONDocument } from "vscode-json-languageservice";
+import { JSONDocument, StringASTNode } from "vscode-json-languageservice";
 import { Diagnostic, DiagnosticSeverity } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { L10nConfiguration } from "./l10n_manager";
+import {
+  findMessagePlaceholders,
+  getMetadataPlaceholderNodesByMessage,
+  PLACEHOLDER_NAME_PATTERN,
+} from "./arb_placeholders";
 
 export interface ArbValidationContext {
   readonly document: TextDocument;
@@ -83,7 +88,7 @@ function validateMetadataHasMessage({
   return diagnostics;
 }
 
-/// Check if every message in the template has metadata defined
+/// Check message metadata and placeholder consistency in the template
 function validateMessageHasMetadata({
   document,
   jsonDocument,
@@ -109,32 +114,140 @@ function validateMessageHasMetadata({
       .filter((property) => property.keyNode.value.startsWith("@"))
       .map((property) => property.keyNode.value),
   );
+  const metadataPlaceholdersByMessage =
+    getMetadataPlaceholderNodesByMessage(jsonDocument);
   const diagnostics: Diagnostic[] = [];
 
   for (const property of topLevelProperties) {
     const messageKeyNode = property.keyNode;
     const messageKey = messageKeyNode.value;
 
-    if (
-      messageKey.startsWith("@") ||
-      definedMetadataKeys.has(`@${messageKey}`)
-    ) {
+    if (messageKey.startsWith("@")) {
       continue;
     }
 
-    diagnostics.push(
-      createDiagnostic({
-        document,
-        offset: messageKeyNode.offset,
-        length: messageKeyNode.length,
-        message: `Message does not have metadata defined. Add metadata with the key "@${messageKey}".`,
-        code: "arb/message-without-metadata",
-        severity: DiagnosticSeverity.Information,
-      }),
+    if (!definedMetadataKeys.has(`@${messageKey}`)) {
+      diagnostics.push(
+        createDiagnostic({
+          document,
+          offset: messageKeyNode.offset,
+          length: messageKeyNode.length,
+          message: `Message does not have metadata defined. Add metadata with the key "@${messageKey}".`,
+          code: "arb/message-without-metadata",
+          severity: DiagnosticSeverity.Information,
+        }),
+      );
+    }
+
+    if (property.valueNode?.type !== "string") {
+      continue;
+    }
+
+    const messageNode = property.valueNode;
+    const placeholders = findMessagePlaceholders(messageNode.value);
+    const metadataPlaceholderNodes =
+      metadataPlaceholdersByMessage.get(messageKey) ?? [];
+    const metadataPlaceholderNames = new Set(
+      metadataPlaceholderNodes.map((placeholder) => placeholder.value),
     );
+    const usedPlaceholderNames = new Set(
+      placeholders.map((placeholder) => placeholder.value),
+    );
+
+    for (const placeholder of placeholders) {
+      const start = getStringContentDocumentOffset(
+        document,
+        messageNode,
+        placeholder.start,
+      );
+      const end = getStringContentDocumentOffset(
+        document,
+        messageNode,
+        placeholder.end,
+      );
+
+      if (!PLACEHOLDER_NAME_PATTERN.test(placeholder.value)) {
+        diagnostics.push(
+          createDiagnostic({
+            document,
+            offset: start,
+            length: end - start,
+            message: `"${placeholder.value}" is not a valid placeholder name. A placeholder must start with a letter and contain only letters, numbers, underscores, or dollar signs after the first character.`,
+            code: "arb/invalid-placeholder",
+          }),
+        );
+        continue;
+      }
+
+      if (!metadataPlaceholderNames.has(placeholder.value)) {
+        diagnostics.push(
+          createDiagnostic({
+            document,
+            offset: start,
+            length: end - start,
+            message: `Placeholder "${placeholder.value}" not defined in the message metadata.`,
+            code: "arb/placeholder-without-metadata",
+            severity: DiagnosticSeverity.Warning,
+          }),
+        );
+      }
+    }
+
+    for (const placeholderNode of metadataPlaceholderNodes) {
+      if (usedPlaceholderNames.has(placeholderNode.value)) {
+        continue;
+      }
+
+      diagnostics.push(
+        createDiagnostic({
+          document,
+          offset: placeholderNode.offset,
+          length: placeholderNode.length,
+          message: `Placeholder "${placeholderNode.value}" is defined in the message metadata, but not used in the message.`,
+          code: "arb/missing-placeholder-with-metadata",
+          severity: DiagnosticSeverity.Warning,
+        }),
+      );
+    }
   }
 
   return diagnostics;
+}
+
+function getStringContentDocumentOffset(
+  document: TextDocument,
+  stringNode: StringASTNode,
+  decodedOffset: number,
+): number {
+  const contentStart = stringNode.offset + 1;
+  const contentEnd = Math.max(
+    contentStart,
+    stringNode.offset + stringNode.length - 1,
+  );
+  const rawContent = document.getText().slice(contentStart, contentEnd);
+  let currentDecodedOffset = 0;
+  let currentRawOffset = 0;
+
+  while (
+    currentDecodedOffset < decodedOffset &&
+    currentRawOffset < rawContent.length
+  ) {
+    if (rawContent[currentRawOffset] !== "\\") {
+      currentRawOffset += 1;
+      currentDecodedOffset += 1;
+      continue;
+    }
+
+    if (rawContent[currentRawOffset + 1] === "u") {
+      currentRawOffset += Math.min(6, rawContent.length - currentRawOffset);
+    } else {
+      currentRawOffset += Math.min(2, rawContent.length - currentRawOffset);
+    }
+
+    currentDecodedOffset += 1;
+  }
+
+  return contentStart + currentRawOffset;
 }
 
 /// Validate that message keys are valid public Dart identifiers
@@ -170,6 +283,7 @@ function validateKeyFormat({
   return diagnostics;
 }
 
+/// Check if there is any message without metadata in the template
 async function validateMissingMessages({
   document,
   jsonDocument,
