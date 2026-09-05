@@ -1,7 +1,7 @@
 {
   "name": "arb-language-server",
   "description": "Language server for Flutter ARB localization files",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "license": "MIT",
   "engines": {
     "node": ">=18"
@@ -11,10 +11,10 @@
     "schemas/"
   ],
   "scripts": {
-	"clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
-	"compile": "tsc -p .",
-	"watch": "tsc -p . -w",
-	"prepack": "npm run clean && npm run compile -- --incremental false"
+    "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
+    "compile": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "prepack": "npm run clean && npm run compile -- --incremental false"
   },
   "publishConfig": {
     "access": "public"
